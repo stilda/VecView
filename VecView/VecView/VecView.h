@@ -34,7 +34,9 @@
 //
 // TODO:
 // 1. When constructing Vector Views you are asked to provide pointer T * (const T *) in the role of reference to storage of coordinates.
-//    Instead it is better to template on this parameter.
+//    Instead it is better to template on this parameter. It has to provide a type of vector coordinates and operator [] to access them.
+// 2. Ensure inlining of everything to get a single loop over coordinates like shown in example above.
+// 3. Add much more operaions.
 //
 // Use examples:
 //
