@@ -17,7 +17,7 @@
 //
 // Vector view can be with specified dimention and without it. 
 // You can omit dimention specification everythere where it is possible to infer it from operations' mathematical semantic.
-// For example when you add to vectors you are allowed to specify dimention for only one of them. The other will be supposed to have the same dimention. 
+// For example when you add two vectors you are allowed to specify dimention for only one of them. The other will be supposed to have the same dimention. 
 // Or you can write Dot( v1 + v2, v3 + v4 ) where only v4 has specified dimention.
 //
 // There are several types of Vector View:
@@ -68,6 +68,54 @@ namespace vevi
 {
 	namespace details
 	{
+		namespace storages
+		{
+			// Support const T* and T* cases
+			template<typename Ptr>
+			struct StridedArrayPtr
+			{
+				using ElementType = typename std::remove_const<typename std::remove_pointer<Ptr>::type>::type;
+				typename std::add_reference<typename std::remove_pointer<Ptr>::type>::type operator[](int idx) const
+				{
+					return ptr[idx*stride];
+				}
+				StridedArrayPtr(Ptr ptr, int stride) : ptr(ptr), stride(stride) {}
+			private:
+				Ptr const ptr;
+				int stride;
+			};
+
+			template<typename T>
+			struct OwnedArray
+			{
+				using ElementType = T;
+				T & operator[](int idx) const
+				{
+					return storage[idx];
+				}
+				OwnedArray(int dim) { storage = new T[dim]; }
+				~OwnedArray() { if (storage) delete[] storage; }
+			private:
+				T * storage = nullptr;
+			};
+
+			template<typename Storage>
+			struct StorageHelper
+			{
+				using ElementType = typename Storage::ElementType;
+			};
+			template<typename T>
+			struct StorageHelper < const T * >
+			{
+				using ElementType = T;
+			};
+			template<typename T>
+			struct StorageHelper < T * >
+			{
+				using ElementType = T;
+			};
+		}
+
 		template<typename T>
 		class NumberView
 		{
@@ -137,7 +185,7 @@ namespace vevi
 		};
 
 		// If first argument has Dim then use it, otherwise use Dim of the second argument.
-		// If there is not Dim of the second argument there will be compilation error 
+		// If there is no Dim of the second argument there will be compilation error 
 		// meaning that vector operation can not be performed because dimentionality is not known
 		template<typename Arg1, typename Arg2>
 		struct Dimention
