@@ -132,6 +132,31 @@ namespace vevi
 		return true;
 	}
 
+	bool test_stride()
+	{
+		int v1[] = { 1, 2, 3, 4, 5, 6 };
+		int v2[] = { 11, 12, 13, 14, 15, 16 };
+
+		AVec(v2, 3) = Vec(v1, 3, 2);
+		assert(v2[0] == 1 && v2[1] == 3 && v2[2] == 5);
+
+		AVec(v2, 3, 2) = Vec(v1);
+		assert(v2[0] == 1 && v2[2] == 2 && v2[4] == 3);
+
+		return true;
+	}
+
+	void test_owned_array()
+	{
+		auto v = AVec<int>(2);
+
+		int v1[2] = { 1, 2 };
+		int v2[2] = { 3, 4 };
+
+		v = Vec(v1) + Vec(v2);
+		assert(v[0] == 4 && v[1] == 6);
+	}
+
 	bool tests()
 	{
 		compile_usage();
@@ -144,7 +169,8 @@ namespace vevi
 		test_scalar_op();
 		test_nodim_vectors();
 		test_cast();
-
+		test_stride();
+		test_owned_array();
 		//std::cout << vevi::Operations::HasMemberDim<Operations::NumberView<int>>::value;
 		//std::cout << vevi::Operations::HasMemberDim<Operations::VectorView<int>>::value;
 		return true;

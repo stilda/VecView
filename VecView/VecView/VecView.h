@@ -1,11 +1,11 @@
 //
-// This library provide operations on multidimentional vectors:
+// This library provides operations on multidimentional vectors:
 //  - arithmetic operations like negation, addition, subtraction, dot prod, l2 norm, scalar-vector operations, etc
 //  - statistical operations like min/max coordinate, mean, std.dev., etc
 //  - casting types
 //
 // This library does not provide implementation of Vector type with storage. 
-// Instead it operates on Vector Views that require pointer T* (or const T*) for construction, and use operator [] to access elements of vector.
+// Instead it operates on Vector Views that require storage interface for construction, and calls its operator [] to access elements of vector.
 //
 // Arguments of operations can be const views of vectors.
 // There is a special assignable view results of computation can be assigned to.
@@ -33,10 +33,8 @@
 // to use scalar numbers in expressions wrap them in Num(...).
 //
 // TODO:
-// 1. When constructing Vector Views you are asked to provide pointer T * (const T *) in the role of reference to storage of coordinates.
-//    Instead it is better to template on this parameter. It has to provide a type of vector coordinates and operator [] to access them.
-// 2. Ensure inlining of everything to get a single loop over coordinates like shown in example above.
-// 3. Add much more operaions.
+// 1. Ensure inlining of everything to get a single loop over coordinates like shown in example above.
+// 2. Add much more operaions.
 //
 // Use examples:
 //
@@ -68,9 +66,25 @@ namespace vevi
 {
 	namespace details
 	{
+		// Standard storages of coordinates for which Views can be created.
+		// User can define his own storages. It has to have members: ElementType, operator[], support move semantics.
 		namespace storages
 		{
-			// Support const T* and T* cases
+			// Storage interface that is essentially pointer to an array. Support const T* and T* cases
+			template<typename Ptr>
+			struct ArrayPtr
+			{
+				using ElementType = typename std::remove_const<typename std::remove_pointer<Ptr>::type>::type;
+				typename std::add_reference<typename std::remove_pointer<Ptr>::type>::type operator[](int idx) const
+				{
+					return ptr[idx];
+				}
+				ArrayPtr(const Ptr & ptr) : ptr(ptr) {}
+			private:
+				const Ptr ptr;
+			};
+
+			// Storage interface that is essentially pointer to strided array. Support const T* and T* cases
 			template<typename Ptr>
 			struct StridedArrayPtr
 			{
@@ -79,40 +93,31 @@ namespace vevi
 				{
 					return ptr[idx*stride];
 				}
-				StridedArrayPtr(Ptr ptr, int stride) : ptr(ptr), stride(stride) {}
+				StridedArrayPtr(const Ptr & ptr, int stride) : ptr(ptr), stride(stride) {}
 			private:
 				Ptr const ptr;
-				int stride;
+				const int stride;
 			};
 
+			// Storage interface that allocates and owns memory for coordinates.
 			template<typename T>
 			struct OwnedArray
 			{
 				using ElementType = T;
 				T & operator[](int idx) const
 				{
-					return storage[idx];
+					return buf[idx];
 				}
-				OwnedArray(int dim) { storage = new T[dim]; }
-				~OwnedArray() { if (storage) delete[] storage; }
+				OwnedArray(int dim) { buf = new T[dim]; }
+				~OwnedArray() { if (buf) delete[] buf; }
+				OwnedArray(OwnedArray<T> && oa)
+				{
+					buf = oa.buf;
+					oa.buf = nullptr;
+				}
 			private:
-				T * storage = nullptr;
-			};
-
-			template<typename Storage>
-			struct StorageHelper
-			{
-				using ElementType = typename Storage::ElementType;
-			};
-			template<typename T>
-			struct StorageHelper < const T * >
-			{
-				using ElementType = T;
-			};
-			template<typename T>
-			struct StorageHelper < T * >
-			{
-				using ElementType = T;
+				OwnedArray(const OwnedArray<T> & oa){}
+				T * buf = nullptr;
 			};
 		}
 
@@ -127,43 +132,44 @@ namespace vevi
 			operator T() const { return num; }
 		};
 
-		template<typename T>
+		template<typename Storage>
 		class VectorView
 		{
 			const int dim;
-			const T * const storage;
+			const Storage storage;
 		public:
-			using type = T;
-			VectorView(const T * storage, int dim) : dim(dim), storage(storage) {}
-			T Evaluate(int i) const { return storage[i]; }
+			using type = typename Storage::ElementType;
+			VectorView(Storage storage, int dim) : dim(dim), storage(std::move(storage)) {}
+			type Evaluate(int i) const { return storage[i]; }
 			int Dim() const { return dim; }
 		};
 
 		// Not Dimentional Vector is a vector with no dimention specified. Usage of it is controlled by other vectors' dimentions in expression.
 		// User is responsible for checking that it has enough length to compute expression.
-		template<typename T>
+		template<typename Storage>
 		class NoDimVectorView
 		{
-			const T * const storage;
+			const Storage storage;
 		public:
-			using type = T;
-			NoDimVectorView(const T * storage) : storage(storage) {}
-			T Evaluate(int i) const { return storage[i]; }
+			using type = typename Storage::ElementType;
+			NoDimVectorView(Storage storage) : storage(std::move(storage)) {}
+			type Evaluate(int i) const { return storage[i]; }
 		};
 
-		template<typename T>
+		template<typename Storage>
 		class AssignableVectorView
 		{
 			const int dim;
-			T * const storage;
+			const Storage storage;
 		public:
-			using type = T;
-			AssignableVectorView(T * storage, int dim) : dim(dim), storage(storage) {}
-			T Evaluate(int i) const { return storage[i]; }
+			using type = typename Storage::ElementType;
+			AssignableVectorView(Storage storage, int dim) : dim(dim), storage(std::move(storage)) {}
+			type Evaluate(int i) const { return storage[i]; }
 			int Dim() const { return dim; }
+			type operator[](int i) const { return storage[i]; }
 
 			template<typename Expr>
-			AssignableVectorView<T> & operator=(const Expr & expr)
+			AssignableVectorView<Storage> & operator=(const Expr & expr)
 			{
 				for (int i = 0; i < dim; ++i)
 					storage[i] = expr.Evaluate(i);
@@ -279,7 +285,7 @@ namespace vevi
 			using type = typename Op<Arg1, Args...>::type;
 			UnaOp(const Arg1 & v) : v(v) {}
 			type Evaluate(int i) const { return Op<Arg1, Args...>::run(i, v); }
-			
+
 			template<typename U = Arg1>
 			typename std::enable_if<HasMemberDim<U>::value, int>::type
 				Dim() const { return v.Dim(); }
@@ -289,13 +295,45 @@ namespace vevi
 
 	// Assignable Vector
 	template<typename T>
-	inline details::AssignableVectorView<T> AVec(T * storage, int dim) { return details::AssignableVectorView<T>(storage, dim); }
+	inline details::AssignableVectorView<details::storages::ArrayPtr<T*>> AVec(T * ptr, int dim)
+	{
+		return{ { ptr }, dim };
+	}
+	template<typename T>
+	inline details::AssignableVectorView<details::storages::StridedArrayPtr<T*>> AVec(T * ptr, int dim, int stride)
+	{
+		return{ { ptr, stride }, dim };
+	}
+	template<typename T>
+	inline details::AssignableVectorView<details::storages::OwnedArray<T>> AVec(int dim)
+	{
+		return{ { dim }, dim };
+	}
+
 	// Const Vector
 	template<typename T>
-	inline details::VectorView<T> Vec(const T * storage, int dim) { return details::VectorView<T>(storage, dim); }
+	inline details::VectorView<details::storages::ArrayPtr<const T*>> Vec(const T * ptr, int dim)
+	{
+		return{ { ptr }, dim };
+	}
+	template<typename T>
+	inline details::VectorView<details::storages::StridedArrayPtr<const T*>> Vec(const T * ptr, int dim, int stride)
+	{
+		return{ { ptr, stride }, dim };
+	}
+
 	// Const Vector without dimention
 	template<typename T>
-	inline details::NoDimVectorView<T> Vec(const T * storage) { return details::NoDimVectorView<T>(storage); }
+	inline details::NoDimVectorView<details::storages::ArrayPtr<const T*>> Vec(const T * ptr)
+	{
+		return{ { ptr } };
+	}
+	//template<typename T>
+	//inline details::NoDimVectorView<details::storages::StridedArrayPtr<const T*>> Vec(const T * ptr, int stride) 
+	//{ 
+	//	return {{ptr,stride}};
+	//}
+
 	// Wrap for numbers
 	template<typename T>
 	inline details::NumberView<T> Num(T num) { return details::NumberView<T>(num); }
